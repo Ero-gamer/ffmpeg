@@ -302,6 +302,50 @@ public class WhisperKit implements Closeable {
         return nativeGetSegmentT1(contextHandle, index);
     }
 
+    /**
+     * The model's own probability that segment {@code index} is <b>not</b> speech, in [0, 1].
+     *
+     * <p>Computed by whisper during decoding, so reading it costs nothing.
+     *
+     * <p><b>Why you need it.</b> whisper only suppresses a segment when <b>both</b>
+     * conditions hold:
+     *
+     * <pre>is_no_speech = (no_speech_prob &gt; no_speech_thold &amp;&amp;
+     *                avg_logprobs   &lt; logprob_thold)</pre>
+     *
+     * That AND is conservative on purpose upstream: it protects quiet real speech. The
+     * consequence is that on broadband noise -- an unplugged microphone, a dead channel,
+     * hiss -- the model can be <i>confident</i> in its hallucination. {@code avg_logprobs}
+     * stays high, the AND fails, and a grammatical <b>invented</b> sentence is emitted with
+     * a high {@code no_speech_prob}.
+     *
+     * <p>Measured on thirty seconds of white noise: a full sentence. For subtitling that is
+     * the worst failure there is -- every silent or noisy passage gets invented dialogue,
+     * and nothing in the output says so.
+     *
+     * <p>Applying your own rule, without the AND:
+     *
+     * <pre>
+     * boolean speech = false;
+     * for (int i = 0; i &lt; kit.getSegmentCount(); i++) {
+     *     if (kit.getSegmentNoSpeechProb(i) &lt;= 0.6f) { speech = true; break; }
+     * }
+     * if (!speech) skipSubtitlesForThisChunk();
+     * </pre>
+     *
+     * <p><b>Note:</b> whisper computes one value per thirty-second window and copies it into
+     * every segment of that window, so segments from the same window share it. That is
+     * upstream behaviour, not a simplification here.
+     *
+     * <p><b>Not a noise detector.</b> A train, a fan, a crowd are <i>coloured</i> noise and
+     * the model may genuinely hear speech in them. This is the model's opinion, published so
+     * you can weigh it -- not a guarantee.
+     */
+    public float getSegmentNoSpeechProb(int index) {
+        checkOpen();
+        return nativeGetSegmentNoSpeechProb(contextHandle, index);
+    }
+
     /** Whisper system information string (CPU capabilities, build flags). Null on the Free tier. */
     public static String getSystemInfo() {
         return AVAILABLE ? nativeGetSystemInfo() : null;
@@ -385,5 +429,6 @@ public class WhisperKit implements Closeable {
     private static native String nativeGetSegmentText(long contextPtr, int index);
     private static native long   nativeGetSegmentT0(long contextPtr, int index);
     private static native long   nativeGetSegmentT1(long contextPtr, int index);
+    private static native float  nativeGetSegmentNoSpeechProb(long contextPtr, int index);
     private static native String nativeGetSystemInfo();
 }

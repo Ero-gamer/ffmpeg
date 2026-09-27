@@ -209,6 +209,74 @@ class ExtraActivity : Activity() {
                                 "echantillons=" + pcm.size + " trouve=" + trouves +
                                     " texte=" + texte.take(90),
                             )
+
+                            // ─────────────────────────────────────────────────────────
+                            // Non-regression de `getSegmentNoSpeechProb`, ajoute en
+                            // 8.1.10.
+                            //
+                            // ⚠️ Deux choses a verifier, et la seconde est celle qu'on
+                            // oublie.
+                            //
+                            // 1. QUE L'ACCESSEUR SE LIE. Un nom JNI qui ne correspond
+                            //    pas a la declaration Java ne casse pas le build : il
+                            //    leve `UnsatisfiedLinkError` au premier APPEL. Il faut
+                            //    donc l'appeler pour le savoir.
+                            //
+                            // 2. QU'IL MESURE. Un accesseur qui rendrait 0 en dur
+                            //    passerait n'importe quel controle de bornes -- et
+                            //    « dans [0, 1] » est vrai pour une constante. On compare
+                            //    donc DEUX entrees dont on connait la nature : l'extrait
+                            //    de parole qu'on vient de transcrire, et du bruit blanc.
+                            //    Les deux valeurs doivent SE SEPARER.
+                            //
+                            // Sans le point 2, le banc rendrait OK sur un bouchon, et
+                            // c'est exactement ce que ce depot appelle un verdict de
+                            // succes pour un endroit que personne n'a regarde.
+                            val lireNsp = kWhisper.getMethod(
+                                "getSegmentNoSpeechProb", Int::class.javaPrimitiveType,
+                            )
+                            val compter = kWhisper.getMethod("getSegmentCount")
+                            val nParole = compter.invoke(w) as Int
+                            val nspParole = (0 until nParole).map {
+                                lireNsp.invoke(w, it) as Float
+                            }
+
+                            // Dix secondes de bruit blanc a 16 kHz. Le signe de chaque
+                            // echantillon est independant du precedent : c'est du bruit
+                            // au sens strict, pas un enregistrement bruyant.
+                            val alea = java.util.Random(7)
+                            val bruit = FloatArray(16000 * 10) {
+                                (alea.nextFloat() * 2f - 1f) * 0.2f
+                            }
+                            kWhisper.getMethod("transcribe", FloatArray::class.java)
+                                .invoke(w, bruit)
+                            val nBruit = compter.invoke(w) as Int
+                            val nspBruit = (0 until nBruit).map {
+                                lireNsp.invoke(w, it) as Float
+                            }
+
+                            val pireParole = nspParole.minOrNull() ?: -1f
+                            val pireBruit = nspBruit.maxOrNull() ?: -1f
+                            val muet = nspParole.all { it == 0f } && nspBruit.all { it == 0f }
+                            val separe = pireBruit > pireParole + 0.2f
+                            note(
+                                "WHISPER-NSP",
+                                when {
+                                    // Les deux a zero : l'accesseur ne mesure rien.
+                                    muet -> "ECHEC"
+                                    separe -> "OK"
+                                    else -> "AVERIFIER"
+                                },
+                                "parole min=" + pireParole + " (" + nParole + " seg) " +
+                                    "bruit max=" + pireBruit + " (" + nBruit + " seg) " +
+                                    if (muet) {
+                                        "-- TOUT A ZERO : l'accesseur est muet"
+                                    } else if (separe) {
+                                        "-- les deux se separent"
+                                    } else {
+                                        "-- ne se separent PAS, seuil a revoir"
+                                    },
+                            )
                         }
                     } catch (t: Throwable) {
                         // ⚠️ Un palier gratuit REFUSE Whisper, et c'est le comportement

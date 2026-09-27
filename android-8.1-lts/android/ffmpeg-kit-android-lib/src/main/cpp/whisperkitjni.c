@@ -126,6 +126,37 @@ Java_com_arthenica_ffmpegkit_WhisperKit_nativeGetSegmentT1(
             (struct whisper_context *)(intptr_t)ctx_ptr, (int)index);
 }
 
+/*
+ * Returns the model's own probability that this segment is NOT speech, in [0, 1].
+ *
+ * Computed by whisper during decoding, so reading it costs nothing -- and it was being
+ * dropped at the JNI boundary.
+ *
+ * Why it matters. whisper only suppresses a segment when BOTH conditions hold:
+ *
+ *     is_no_speech = (no_speech_prob > no_speech_thold &&
+ *                     avg_logprobs   < logprob_thold)      // whisper.cpp:6241
+ *
+ * That AND is conservative on purpose upstream: it protects quiet real speech. The
+ * consequence is that on broadband noise -- an unplugged microphone, a dead channel, hiss
+ * -- the model can be CONFIDENT in its hallucination. avg_logprobs stays above -1.0, the
+ * AND fails, and a grammatical invented sentence is emitted with a high no_speech_prob.
+ *
+ * Measured 2026-09-27 on thirty seconds of white noise, through the same whisper.cpp
+ * v1.7.5 this library builds: a full sentence. For a subtitling product that is the worst
+ * possible failure -- every silent or noisy passage of a recording gets invented dialogue,
+ * and nothing in the output says so.
+ *
+ * Exposing the value lets the caller apply its own rule without the AND.
+ */
+JNIEXPORT jfloat JNICALL
+Java_com_arthenica_ffmpegkit_WhisperKit_nativeGetSegmentNoSpeechProb(
+        JNIEnv *env, jclass clazz, jlong ctx_ptr, jint index) {
+    (void)env; (void)clazz;
+    return (jfloat)whisper_full_get_segment_no_speech_prob(
+            (struct whisper_context *)(intptr_t)ctx_ptr, (int)index);
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_arthenica_ffmpegkit_WhisperKit_nativeGetSystemInfo(
         JNIEnv *env, jclass clazz) {
