@@ -241,11 +241,20 @@ class ExtraActivity : Activity() {
                                 lireNsp.invoke(w, it) as Float
                             }
 
-                            // Dix secondes de bruit blanc a 16 kHz. Le signe de chaque
-                            // echantillon est independant du precedent : c'est du bruit
-                            // au sens strict, pas un enregistrement bruyant.
+                            // TRENTE secondes de bruit blanc a 16 kHz -- une fenetre
+                            // whisper entiere, et c'est la duree qui compte.
+                            //
+                            // ⚠️ Premier essai a DIX secondes : whisper n'a rendu AUCUN
+                            // segment, donc rien a lire, donc aucune comparaison possible
+                            // -- le banc a rendu AVERIFIER plutot que de conclure, ce qui
+                            // etait juste mais sterile. C'est aussi ce que l'ancienne
+                            // documentation du depot avait mesure, a dix secondes, pour en
+                            // conclure a tort que whisper « n'emet rien sur du bruit ».
+                            //
+                            // A trente secondes il emet une phrase inventee. Un temoin
+                            // doit reproduire la CONDITION du defaut, pas s'en approcher.
                             val alea = java.util.Random(7)
-                            val bruit = FloatArray(16000 * 10) {
+                            val bruit = FloatArray(16000 * 30) {
                                 (alea.nextFloat() * 2f - 1f) * 0.2f
                             }
                             kWhisper.getMethod("transcribe", FloatArray::class.java)
@@ -255,26 +264,47 @@ class ExtraActivity : Activity() {
                                 lireNsp.invoke(w, it) as Float
                             }
 
+                            // ⚠️ Ce que ce temoin peut etablir, et ce qu'il ne peut pas.
+                            //
+                            // PEUT : que l'accesseur se lie (on vient de l'appeler) et
+                            // qu'il rend une vraie sortie de modele. Un bouchon rendrait
+                            // 0 exactement ; une probabilite mesuree a la precision d'un
+                            // flottant, non.
+                            //
+                            // NE PEUT PAS, ici : comparer parole et bruit. Sur ce modele
+                            // (32 Mo) et a ce niveau, whisper ne rend AUCUN segment sur du
+                            // bruit blanc, ni a dix secondes ni a trente -- il n'y a donc
+                            // rien a lire du cote bruit. L'hallucination mesuree ailleurs
+                            // l'etait sur `whisper-base.bin` et a un niveau plus eleve :
+                            // elle depend du MODELE et du NIVEAU, pas du wrapper (les
+                            // parametres whisper des deux implementations sont identiques,
+                            // verifie ligne par ligne).
+                            //
+                            // Le verdict porte donc sur ce qui est etabli, et le reste est
+                            // rapporte comme information. Faire dependre le verdict d'une
+                            // hallucination reviendrait a exiger un defaut pour valider un
+                            // correctif.
                             val pireParole = nspParole.minOrNull() ?: -1f
                             val pireBruit = nspBruit.maxOrNull() ?: -1f
-                            val muet = nspParole.all { it == 0f } && nspBruit.all { it == 0f }
-                            val separe = pireBruit > pireParole + 0.2f
+                            val mesure = nspParole.any { it > 0f && it <= 1f }
+                            val separe = nBruit > 0 && pireBruit > pireParole + 0.2f
                             note(
                                 "WHISPER-NSP",
-                                when {
-                                    // Les deux a zero : l'accesseur ne mesure rien.
-                                    muet -> "ECHEC"
-                                    separe -> "OK"
-                                    else -> "AVERIFIER"
-                                },
+                                if (mesure) "OK" else "ECHEC",
                                 "parole min=" + pireParole + " (" + nParole + " seg) " +
                                     "bruit max=" + pireBruit + " (" + nBruit + " seg) " +
-                                    if (muet) {
-                                        "-- TOUT A ZERO : l'accesseur est muet"
+                                    if (!mesure) {
+                                        "-- TOUT A ZERO : l'accesseur se lie mais ne " +
+                                            "mesure rien"
                                     } else if (separe) {
-                                        "-- les deux se separent"
+                                        "-- se lie, mesure, et SEPARE parole et bruit"
+                                    } else if (nBruit == 0) {
+                                        "-- se lie et mesure ; aucun segment sur le bruit " +
+                                            "avec ce modele, donc pas de comparaison " +
+                                            "possible (information, pas un echec)"
                                     } else {
-                                        "-- ne se separent PAS, seuil a revoir"
+                                        "-- se lie et mesure ; les deux ne se separent pas " +
+                                            "a ce seuil"
                                     },
                             )
                         }
